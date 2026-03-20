@@ -172,6 +172,16 @@ NUMCL.  If not, see <http://www.gnu.org/licenses/>.
 
 ;; memo: perhaps eye-based argmax is better
 
+(defun array->list (array)
+  (let ((dims (array-dimensions array))
+        (rank (rank array)))
+    (labels ((rec (coords depth)
+               (if (= depth rank)
+                   (apply #'cl::aref array (reverse coords))
+                   (loop for i below (nth depth dims)
+                         collect (rec (cons i coords) (1+ depth))))))
+      (rec nil 0))))
+
 (defun compute-strides (dims)
   (let ((prod 1))
     (loop for dim in (reverse dims)
@@ -201,11 +211,11 @@ NUMCL.  If not, see <http://www.gnu.org/licenses/>.
     (nil
      (let ((val (gensym "val"))
            (best-val (gensym "best-val")))
-       `(let ((,val (aref ,avar ,@(reverse loop-index)))
-              (,best-val (aref ,rval-rvar ,@(reverse sum-index))))
+       `(let ((,val (cl:aref ,avar ,@(reverse loop-index)))
+              (,best-val (cl:aref ,rval-rvar ,@(reverse sum-index))))
           (when (funcall ,comp ,val ,best-val)
-            (setf (aref ,rval-rvar ,@(reverse sum-index)) ,val)
-            (setf (aref ,ridx-rvar ,@(reverse sum-index))
+            (setf (cl:aref ,rval-rvar ,@(reverse sum-index)) ,val)
+            (setf (cl:aref ,ridx-rvar ,@(reverse sum-index))
                   ,(let ((coord-list (loop for ax in (sort axes #'<)
                                            for idx = (nth ax (reverse loop-index))
                                            collect idx)))
@@ -248,9 +258,9 @@ NUMCL.  If not, see <http://www.gnu.org/licenses/>.
                           (most-negative-value val-type)
                           (most-positive-value val-type)))
          (val-result (%make-array result-shape
-				 :element-type val-type :initial-element initial-val))
+				  :element-type val-type :initial-element initial-val))
          (idx-result (%make-array result-shape
-				 :element-type type :initial-element 0)))
+				  :element-type type :initial-element 0)))
     (if (null axes)
         (let ((size (array-total-size array))
               (best-idx 0)
@@ -265,7 +275,7 @@ NUMCL.  If not, see <http://www.gnu.org/licenses/>.
           (funcall (compile nil lambda-expr) val-result idx-result array comparator)
           (if (zerop (rank idx-result))
               (row-major-aref idx-result 0)
-              idx-result)))))
+              (array->list idx-result))))))
 
 (defun numcl:argmax (array &rest args &key axes (type 'fixnum))
   (declare (symbol type)
