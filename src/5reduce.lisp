@@ -172,30 +172,110 @@ NUMCL.  If not, see <http://www.gnu.org/licenses/>.
 
 ;; memo: perhaps eye-based argmax is better
 
-#+(or)
-(defun argmax (array &key (axis 0) (type (array-element-type array)))
-  (print array)
-  (print (numcl:max array :axes axis :type type))
-  (print (expand-dims (numcl:max array :axes axis :type type) axis))
-  (print (numcl:= array
-                  (expand-dims (numcl:max array :axes axis :type type) axis)))
-  (print (arange (elt (shape array) axis)))
-  ;; (print (expand-dims (arange (elt (shape array) axis)) axis))
-  (numcl:sum (numcl:* (arange (elt (shape array) axis))
-                      (numcl:= array
-                               (expand-dims (numcl:max array :axes axis :type type) axis)))
-             :axes axis))
-  
-  
-#+(or)
-(defun argmin (array &key axes type)
-  (reduce-array '+ axes type))
+(defun compute-strides (dims)
+  (let ((prod 1))
+    (loop for dim in (reverse dims)
+	  collect (prog1 prod (setf prod (* prod dim))))))
 
+(defun coords->list-of-zero (coords)
+  (make-list (length coords) :initial-element 0))
 
+(defun compute-reduce-strides (array axes)
+  (let ((dims (mapcar (lambda (ax) (array-dimension array ax)) axes)))
+    (loop for i from 0 below (length dims)
+          for stride = (apply #'* (nthcdr (1+ i) dims))
+          collect stride)))
 
+(defun arg-reduce-lambda (rank axes)
+  (with-gensyms (rval-rvar ridx-rvar avar comp)
+    (let ((dims-vars (make-gensym-list rank "?")))
+      `(lambda (,rval-rvar ,ridx-rvar ,avar ,comp)
+         (resolving
+           (declare (gtype (array * ,dims-vars) ,avar))
+           ,(%arg-reduce-lambda rval-rvar ridx-rvar avar
+				comp 0 dims-vars axes nil nil))))))
 
+(defun %arg-reduce-lambda
+    (rval-rvar ridx-rvar avar comp current-axis dims axes loop-index sum-index)
+  (match dims
+    (nil
+     (let ((val (gensym "val"))
+           (best-val (gensym "best-val")))
+       `(let ((,val (aref ,avar ,@(reverse loop-index)))
+              (,best-val (aref ,rval-rvar ,@(reverse sum-index))))
+          (when (funcall ,comp ,val ,best-val)
+            (setf (aref ,rval-rvar ,@(reverse sum-index)) ,val)
+            (setf (aref ,ridx-rvar ,@(reverse sum-index))
+                  ,(let ((coord-list (loop for ax in (sort axes #'<)
+                                           for idx = (nth ax (reverse loop-index))
+                                           collect idx)))
+                     (if (null coord-list)
+                         0
+                         `(let ((strides
+                                  (let ((dims (mapcar (lambda (ax)
+							(array-dimension ,avar ax))
+						      ',axes)))
+                                    (loop for i from 0 below (length dims)
+                                          for stride = (apply #'* (nthcdr (1+ i) dims))
+                                          collect stride))))
+                            (loop for coord in (list ,@coord-list)
+                                  for stride in strides
+                                  sum (* coord stride))))))))))
+    ((list* dim dims)
+     (with-gensyms (i)
+       (if (member current-axis axes)
+           `(dotimes (,i ,dim)
+              ,(%arg-reduce-lambda rval-rvar ridx-rvar avar comp (1+ current-axis)
+				   dims axes (cons i loop-index) sum-index))
+           `(dotimes (,i ,dim)
+              ,(%arg-reduce-lambda rval-rvar ridx-rvar avar comp (1+ current-axis)
+				   dims axes (cons i loop-index) (cons i sum-index))))))))
 
+(defun arg-reduce-array (comparator array &key axes type)
+  (let* ((axes (etypecase axes
+                 (null nil)
+                 (fixnum (list axes))
+                 (list axes)))
+         (rank (rank array))
+         (remaining-axes (loop for i below rank
+                               unless (member i axes)
+				 collect i))
+         (result-shape (mapcar (lambda (ax)
+				 (array-dimension array ax))
+			       remaining-axes))
+         (val-type (array-element-type array))
+         (initial-val (if (eq comparator #'>)
+                          (most-negative-value val-type)
+                          (most-positive-value val-type)))
+         (val-result (make-array result-shape
+				 :element-type val-type :initial-element initial-val))
+         (idx-result (make-array result-shape
+				 :element-type type :initial-element 0)))
+    (if (null axes)
+        (let ((size (array-total-size array))
+              (best-idx 0)
+              (best-val initial-val))
+          (dotimes (i size)
+            (let ((val (row-major-aref array i)))
+              (when (funcall comparator val best-val)
+                (setf best-val val
+                      best-idx i))))
+          best-idx)
+        (let ((lambda-expr (arg-reduce-lambda rank axes)))
+          (funcall (compile nil lambda-expr) val-result idx-result array comparator)
+          (if (zerop (rank idx-result))
+              (row-major-aref idx-result 0)
+              idx-result)))))
 
+(defun numcl:argmax (array &rest args &key axes (type 'fixnum))
+  (declare (symbol type)
+	   ((member fixnum) type))
+  (apply #'arg-reduce-array #'> array :axes axes :type type args))
+
+(defun numcl:argmin (array &rest args &key axes (type 'fixnum))
+  (declare (symbol type)
+	   ((member fixnum) type))
+  (apply #'arg-reduce-array #'< array :axes axes :type type args))
 
 (defun numcl:histogram (array &key (low (amin array)) (high (amax array)) (split 1))
   "Returns a fixnum vector representing a histogram of values.
