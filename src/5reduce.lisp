@@ -247,9 +247,9 @@ NUMCL.  If not, see <http://www.gnu.org/licenses/>.
          (initial-val (if (eq comparator #'>)
                           (most-negative-value val-type)
                           (most-positive-value val-type)))
-         (val-result (make-array result-shape
+         (val-result (%make-array result-shape
 				 :element-type val-type :initial-element initial-val))
-         (idx-result (make-array result-shape
+         (idx-result (%make-array result-shape
 				 :element-type type :initial-element 0)))
     (if (null axes)
         (let ((size (array-total-size array))
