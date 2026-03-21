@@ -98,7 +98,9 @@ NUMCL.  If not, see <http://www.gnu.org/licenses/>.
                  numcl:standard-deviation
                  numcl:avg
                  numcl:var
-                 numcl:stdev))
+                 numcl:stdev
+		 numcl:argmax
+		 numcl:argmin))
 
 (defun numcl:sum  (array &rest args &key axes type)
   (declare (ignorable axes type))
