@@ -247,7 +247,7 @@ NUMCL.  If not, see <http://www.gnu.org/licenses/>.
   (let* ((axes (etypecase axes
                  (null nil)
                  (fixnum (list axes))
-                 (list axes)))
+                 (list (subseq axes 0 (cl::min (length axes) (rank array))))))
          (rank (rank array))
          (remaining-axes (loop for i below rank
                                unless (member i axes)
